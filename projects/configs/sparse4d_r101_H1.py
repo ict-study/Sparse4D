@@ -48,6 +48,7 @@ model = dict(
         type="Sparse4DHead",
         cls_threshold_to_reg=0.05,
         num_decoder=num_decoder,
+        embed_dims=embed_dims,
         instance_bank=dict(
             type="InstanceBank",
             num_anchor=900,
@@ -225,7 +226,7 @@ data_basic_config = dict(
 
 data = dict(
     samples_per_gpu=1,
-    workers_per_gpu=2,
+    workers_per_gpu=0,
     train=dict(
         **data_basic_config,
         ann_file=anno_root + 'nuscenes_infos_train.pkl',

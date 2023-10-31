@@ -112,7 +112,7 @@ class Sparse4D(BaseDetector):
             meta_queue = None
 
         cls_scores, reg_preds = self.head(
-            feature_maps, data, feature_queue, meta_queue
+            feature_maps, data, feature_queue, meta_queue, training=True
         )
         if self.use_deformable_func:
             feature_maps = DAF.feature_maps_format(feature_maps, inverse=True)
@@ -146,7 +146,7 @@ class Sparse4D(BaseDetector):
             meta_queue = None
 
         cls_scores, reg_preds = self.head(
-            feature_maps, data, feature_queue, meta_queue
+            feature_maps, data, feature_queue, meta_queue, training=False
         )
         results = self.head.post_process(cls_scores, reg_preds)
         output = [{"img_bbox": result} for result in results]

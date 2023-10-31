@@ -148,6 +148,7 @@ class SparseBox3DKeyPointsGenerator(BaseModule):
         cur_timestamp=None,
         temp_timestamps=None,
     ):
+        # import ipdb; ipdb.set_trace()
         bs, num_anchor = anchor.shape[:2]
         fix_scale = anchor.new_tensor(self.fix_scale)
         scale = fix_scale[None, None].tile([bs, num_anchor, 1, 1])

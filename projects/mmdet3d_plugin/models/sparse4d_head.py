@@ -53,6 +53,7 @@ class Sparse4DHead(BaseModule):
         max_queue_length=0,
         cls_threshold_to_reg=-1,
         init_cfg=None,
+        embed_dims=None,
         **kwargs,
     ):
         super(Sparse4DHead, self).__init__(init_cfg)
@@ -108,6 +109,7 @@ class Sparse4DHead(BaseModule):
                 for op in self.operation_order
             ]
         )
+        self.embed_dims = embed_dims
 
     def init_weights(self):
         for i, op in enumerate(self.operation_order):
@@ -127,6 +129,7 @@ class Sparse4DHead(BaseModule):
         metas: dict,
         feature_queue=None,
         meta_queue=None,
+        training=False,
     ):
         if isinstance(feature_maps, torch.Tensor):
             feature_maps = [feature_maps]
@@ -137,8 +140,11 @@ class Sparse4DHead(BaseModule):
             temp_instance_feature,
             temp_anchor,
             time_interval,
-        ) = self.instance_bank.get(batch_size, metas)
+        ) = self.instance_bank.get(batch_size, metas, training)
         anchor_embed = self.anchor_encoder(anchor)
+        # instance_feature = instance_feature.view(batch_size, -1, self.embed_dims)
+        # anchor_embed = anchor_embed.view(batch_size, -1, self.embed_dims)
+        # import ipdb; ipdb.set_trace()
         if temp_anchor is not None:
             temp_anchor_embed = self.anchor_encoder(temp_anchor)
         else:
@@ -225,47 +231,91 @@ class Sparse4DHead(BaseModule):
     @force_fp32(apply_to=("cls_scores", "reg_preds"))
     def loss(self, cls_scores, reg_preds, data, feature_maps=None):
         output = {}
+        # import ipdb; ipdb.set_trace()
         for decoder_idx, (cls, reg) in enumerate(zip(cls_scores, reg_preds)):
             reg = reg[..., : len(self.reg_weights)]
-            cls_target, reg_target, reg_weights = self.sampler.sample(
-                cls,
-                reg,
+            reg_front = reg[:, :900, :]
+            cls_front = cls[:, :900, :]
+            reg_back = reg[:, 900:, :]
+            cls_back = cls[:, 900:, :]
+            cls_target_front, reg_target_front, reg_weights_front = self.sampler.sample(
+                cls_front,
+                reg_front,
                 data[self.gt_cls_key],
                 data[self.gt_reg_key],
             )
-            reg_target = reg_target[..., : len(self.reg_weights)]
-            mask = torch.logical_not(torch.all(reg_target == 0, dim=-1))
+            cls_target_back, reg_target_back, reg_weights_back = self.sampler.sample(
+                cls_back,
+                reg_back,
+                data[self.gt_cls_key],
+                data[self.gt_reg_key],
+            )
+
+            reg_target_front = reg_target_front[..., : len(self.reg_weights)]
+            mask = torch.logical_not(torch.all(reg_target_front == 0, dim=-1))
             mask_valid = mask.clone()
 
             num_pos = max(
-                reduce_mean(torch.sum(mask).to(dtype=reg.dtype)), 1.0
+                reduce_mean(torch.sum(mask).to(dtype=reg_front.dtype)), 1.0
             )
             if self.cls_threshold_to_reg > 0:
                 threshold = self.cls_threshold_to_reg
                 mask = torch.logical_and(
-                    mask, cls.max(dim=-1).values.sigmoid() > threshold
+                    mask, cls_front.max(dim=-1).values.sigmoid() > threshold
                 )
 
-            cls = cls.flatten(end_dim=1)
-            cls_target = cls_target.flatten(end_dim=1)
-            cls_loss = self.loss_cls(cls, cls_target, avg_factor=num_pos)
+            cls_front = cls_front.flatten(end_dim=1)
+            cls_target_front = cls_target_front.flatten(end_dim=1)
+            cls_loss_front = self.loss_cls(cls_front, cls_target_front, avg_factor=num_pos)
 
             mask = mask.reshape(-1)
-            reg_weights = reg_weights * reg.new_tensor(self.reg_weights)
-            reg_target = reg_target.flatten(end_dim=1)[mask]
-            reg = reg.flatten(end_dim=1)[mask]
-            reg_weights = reg_weights.flatten(end_dim=1)[mask]
-            reg_target = torch.where(
-                reg_target.isnan(), reg.new_tensor(0.0), reg_target
+            reg_weights_front = reg_weights_front * reg_front.new_tensor(self.reg_weights)
+            reg_target_front = reg_target_front.flatten(end_dim=1)[mask]
+            reg_front = reg_front.flatten(end_dim=1)[mask]
+            reg_weights_front = reg_weights_front.flatten(end_dim=1)[mask]
+            reg_target_front = torch.where(
+                reg_target_front.isnan(), reg_front.new_tensor(0.0), reg_target_front
             )
-            reg_loss = self.loss_reg(
-                reg, reg_target, weight=reg_weights, avg_factor=num_pos
+            reg_loss_front = self.loss_reg(
+                reg_front, reg_target_front, weight=reg_weights_front, avg_factor=num_pos
+            )
+
+
+            reg_target_back = reg_target_back[..., : len(self.reg_weights)]
+            mask = torch.logical_not(torch.all(reg_target_back == 0, dim=-1))
+            mask_valid = mask.clone()
+
+            num_pos = max(
+                reduce_mean(torch.sum(mask).to(dtype=reg_back.dtype)), 1.0
+            )
+            if self.cls_threshold_to_reg > 0:
+                threshold = self.cls_threshold_to_reg
+                mask = torch.logical_and(
+                    mask, cls_back.max(dim=-1).values.sigmoid() > threshold
+                )
+
+            cls_back = cls_back.flatten(end_dim=1)
+            cls_target_back = cls_target_back.flatten(end_dim=1)
+            cls_loss_back = self.loss_cls(cls_back, cls_target_back, avg_factor=num_pos)
+
+            mask = mask.reshape(-1)
+            reg_weights_back = reg_weights_back * reg_back.new_tensor(self.reg_weights)
+            reg_target_back = reg_target_back.flatten(end_dim=1)[mask]
+            reg_back = reg_back.flatten(end_dim=1)[mask]
+            reg_weights_back = reg_weights_back.flatten(end_dim=1)[mask]
+            reg_target_back = torch.where(
+                reg_target_back.isnan(), reg_back.new_tensor(0.0), reg_target_back
+            )
+            reg_loss_back = self.loss_reg(
+                reg_back, reg_target_back, weight=reg_weights_back, avg_factor=num_pos
             )
 
             output.update(
                 {
-                    f"loss_cls_{decoder_idx}": cls_loss,
-                    f"loss_reg_{decoder_idx}": reg_loss,
+                    f"loss_cls_{decoder_idx}_front": cls_loss_front,
+                    f"loss_reg_{decoder_idx}_front": reg_loss_front,
+                    f"loss_cls_{decoder_idx}_back": cls_loss_back,
+                    f"loss_reg_{decoder_idx}_back": reg_loss_back,
                 }
             )
 
