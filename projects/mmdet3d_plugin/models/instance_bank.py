@@ -70,18 +70,34 @@ class InstanceBank(nn.Module):
         self.confidence = None
         self.feature_queue = [] if max_queue_length > 0 else None
         self.meta_queue = [] if max_queue_length > 0 else None
+        self.extrinsic_embed = nn.Linear(16, self.embed_dims)
 
     def init_weight(self):
         self.anchor.data = self.anchor.data.new_tensor(self.anchor_init)
         if self.instance_feature.requires_grad:
             torch.nn.init.xavier_uniform_(self.instance_feature.data, gain=1)
 
-    def get(self, batch_size, metas=None):
-        instance_feature = torch.tile(
-            self.instance_feature[None], (batch_size, 1, 1)
-        )
-        anchor = torch.tile(self.anchor[None], (batch_size, 1, 1))
-
+    def get(self, batch_size, metas=None, training=False):
+        # import ipdb; ipdb.set_trace()
+        if training:
+            lidar2img = metas["projection_mat"]
+            lidar2img = lidar2img.view(1, 6, -1)[:, [0, 3], :]
+            lidar2img = self.extrinsic_embed(lidar2img)
+            lidar2img = lidar2img.unsqueeze(2).expand(-1, -1, 900, -1)
+            instance_feature = self.instance_feature.unsqueeze(0)
+            instance_feature = torch.tile(
+                instance_feature[None], (batch_size, 2, 1, 1)
+            )
+            instance_feature = instance_feature + lidar2img
+            instance_feature = instance_feature.view(batch_size, -1, self.embed_dims)
+            anchor = torch.tile(self.anchor[None], (batch_size, 1, 1))
+            anchor = anchor.unsqueeze(1).expand(-1, 2, -1, -1)
+            anchor = anchor.reshape(batch_size, -1, 11)
+        else:
+            instance_feature = torch.tile(
+                self.instance_feature[None], (batch_size, 1, 1)
+            )
+            anchor = torch.tile(self.anchor[None], (batch_size, 1, 1))
         if (
             self.cached_anchor is not None
             and batch_size == self.cached_anchor.shape[0]

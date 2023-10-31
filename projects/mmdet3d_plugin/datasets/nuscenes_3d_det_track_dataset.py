@@ -517,6 +517,7 @@ class NuScenes3DDetTrackDataset(Custom3DDataset):
             image_paths = []
             lidar2img_rts = []
             cam_intrinsic = []
+            # import ipdb; ipdb.set_trace()
             for cam_type, cam_info in info["cams"].items():
                 image_paths.append(cam_info["data_path"])
                 # obtain lidar to image transformation matrix
