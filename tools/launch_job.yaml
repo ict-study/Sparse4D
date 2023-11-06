@@ -1,0 +1,70 @@
+# self define e.g text_classfication
+TaskName: 'sparse4d_r101_H1_nuscenes_extrinsic_embed_random_2_axis'
+# description for this task
+Description: 'https://qcraft.feishu.cn/wiki/FEUPwvsK7ik5UDknNBEcJXfQnqb'
+# entry point command
+# Entrypoint: 'bash /root/code/MonoCon/mmdetection3d-0.14.0/tools/dist_train.sh 
+#               /root/code/MonoCon/mmdetection3d-0.14.0/configs/monocon/monocon_dla34_200e_small_norm.py 
+#               --work-dir /mnt/vepfs/Perception/perception-users/hongliang/experiments/monoconv/monoconv_smalltrain_norm_nofilter
+#               --resume-from /mnt/vepfs/Perception/perception-users/hongliang/experiments/monoconv/monoconv_smalltrain_norm_nofilter/epoch_5.pth'
+
+Entrypoint: 'bash /root/code/Sparse4D-nuscenes/Sparse4D/tools/launch_dist_train.sh /root/code/Sparse4D-nuscenes/Sparse4D/projects/configs/sparse4d_r101_H1.py 
+              --work-dir /mnt/vepfs/Perception/perception-users/hongliang/experiments/sparse/sparse4d_r101_H1_extrinsic_embed_random_2_axis'
+
+# Entrypoint: 'bash /root/code/Sparse4D-main/local_train.sh sparse4d_r101_H4'
+
+# Entrypoint: 'bash /root/code/MonoCon/mmdetection3d-0.14.0/tools/slurm_train.sh dev monocon_small_norm_nofilter 
+#             /root/code/MonoCon/mmdetection3d-0.14.0/configs/monocon/monocon_dla34_200e_small_norm.py 
+#             /mnt/vepfs/Perception/perception-users/hongliang/experiments/monoconv/monoconv_smalltrain_norm_nofilter'
+
+
+
+Tags: ['mono3d']
+# The code path you want to upload locally
+UserCodePath: '/root/code/'
+# remote path mount in training container
+RemoteMountCodePath: '/root/code/'
+SidecarMemoryRatio: 0.05
+# user define env var
+Envs:
+    -   Name: 'VOLC_REGION'
+        Value: 'cn-beijing'
+Storages:
+    -   Type: 'Tos'
+        MountPath: '/tos/qcraft'
+        Bucket: 'qcraft'
+    -   Type: 'Tos'
+        MountPath: '/qcraftlabeldata'
+        Bucket: 'qcraftlabeldata'
+    -   Type: 'Tos'
+        MountPath: '/sharedata'
+        Bucket: 'sharedata'
+    -   Type: 'Tos'
+        MountPath: '/tosext'
+        Bucket: 'qcraftlabeldata-external'
+    # -   Type: 'Vepfs'      	
+    #     MountPath: 'qcraft-vepfs-01/Perception/perception-public'
+    # -   Type: 'Vepfs'      	
+    #     MountPath: 'qcraft-vepfs-01/Perception/perception-users'
+    -   Type: 'Vepfs'
+        MountPath: '/mnt/vepfs/Perception/perception-users'
+        SubPath: 'Perception/perception-users'
+    -   Type: 'Vepfs'
+        MountPath: '/mnt/vepfs/Perception/perception-public'
+        SubPath: 'Perception/perception-public'
+# Training docker image
+Image: 'qcraft-cn-beijing.cr.volces.com/qcraft/dev-perception-ml:ml-clean-20230106_1245'
+# Resource queue id of "qcraft_perception_01"
+#ResourceQueueID: 'q-20211224114108-78qvl'
+# ResourceQueueID: 'q-20211224114108-78qvl'
+ResourceQueueID: 'q-20230516122003-5h596'
+# Distributed training framework, support: TensorFlowPS, PyTorchDDP, HOROVOD, BytePS, Custom
+Framework: 'PyTorchDDP'
+TaskRoleSpecs:
+  - RoleName: 'worker'
+    RoleReplicas: 1
+    Flavor: 'ml.g1v.22xlarge' # each 8 gpu
+
+ActiveDeadlineSeconds: 7320000000000000000
+# enable tensor board or not
+EnableTensorBoard: false # tensorboard not used

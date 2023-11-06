@@ -70,6 +70,7 @@ class InstanceBank(nn.Module):
         self.confidence = None
         self.feature_queue = [] if max_queue_length > 0 else None
         self.meta_queue = [] if max_queue_length > 0 else None
+        self.extrinsic_embed = nn.Linear(16, self.embed_dims)
 
     def init_weight(self):
         self.anchor.data = self.anchor.data.new_tensor(self.anchor_init)
@@ -77,11 +78,17 @@ class InstanceBank(nn.Module):
             torch.nn.init.xavier_uniform_(self.instance_feature.data, gain=1)
 
     def get(self, batch_size, metas=None):
+        # import ipdb; ipdb.set_trace()
         instance_feature = torch.tile(
             self.instance_feature[None], (batch_size, 1, 1)
         )
         anchor = torch.tile(self.anchor[None], (batch_size, 1, 1))
-
+        lidar2img = metas["projection_mat"]
+        lidar2img = lidar2img.view(1, 6, -1)
+        lidar2img = self.extrinsic_embed(lidar2img)
+        lidar2img = lidar2img.sum(dim=1, keepdims=True)
+        lidar2img = lidar2img.expand(-1, 900, -1)
+        instance_feature = instance_feature + lidar2img
         if (
             self.cached_anchor is not None
             and batch_size == self.cached_anchor.shape[0]

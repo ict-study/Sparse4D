@@ -17,9 +17,10 @@ import mmcv
 from mmcv.utils import print_log
 from mmdet.datasets import DATASETS
 from mmdet3d.core.bbox import LiDARInstance3DBoxes
+from mmdet3d.core.bbox import BaseInstance3DBoxes
 from mmdet3d.datasets.custom_3d import Custom3DDataset
 from mmdet3d.datasets.pipelines import Compose
-
+from mmcv.parallel import DataContainer as DC
 
 @DATASETS.register_module()
 class NuScenes3DDetTrackDataset(Custom3DDataset):
@@ -343,11 +344,219 @@ class NuScenes3DDetTrackDataset(Custom3DDataset):
             aug_configs=aug_configs,
         )
         example = self.pipeline(input_dict)
+        # import ipdb; ipdb.set_trace()
+        # self.show_single_gt(example, index)
         if self.filter_empty_gt and (
             example is None or ~(example["gt_labels_3d"]._data != -1).any()
         ):
             return None, rot_angle, scale_ratio, aug_configs
         return example, rot_angle, scale_ratio, aug_configs
+
+
+    def show_single_gt(self, results, index, save_dir=None, show=False, pipeline=None):
+        save_dir = "/mnt/vepfs/Perception/perception-users/hongliang/experiments/sparse/data/extrinsic_vis" if save_dir is None else save_dir
+        save_dir = os.path.join(save_dir, "visual")
+        # print_log(os.path.abspath(save_dir))
+        # pipeline = self._get_pipeline(pipeline)
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+
+        # fourcc = cv2.VideoWriter_fourcc(*"MJPG")
+        # videoWriter = None
+        # import ipdb; ipdb.set_trace()
+        results = [results]
+        for i, result in enumerate(results):
+            if "gt_bboxes_3d" in result.keys():
+                gt_bboxes_3d = result["gt_bboxes_3d"]
+        
+            imgs = []
+            raw_imgs = [
+                x.permute(1, 2, 0).cpu().numpy() for x in result["img"].data
+            ]
+
+            lidar2img = result["projection_mat"]
+            gt_bboxes_3d = gt_bboxes_3d.data
+
+            # # gt box and extrinsic params trans
+            
+            
+            # sensor2lidar_rotation = result["sensor2lidar_rotation"]
+            # cam_0_extrinsic = sensor2lidar_rotation[0]
+            # cam_1_extrinsic = sensor2lidar_rotation[1]
+            # rotation_matrix = cam_1_extrinsic @ np.linalg.inv(cam_0_extrinsic)
+            # delta_yaw = np.arctan2(rotation_matrix[1, 0], rotation_matrix[0, 0])
+            # yaw_correction = -delta_yaw
+            
+            # for index in range(len(gt_bboxes_3d)):
+            #     x, y, z, w, l, h, yaw, vx, vy = gt_bboxes_3d[index]
+            #     box_coords_xyz = np.array([x, y, z])
+            #     box_coords_xyz_left_front = np.dot(rotation_matrix, box_coords_xyz)
+            #     x_left_front, y_left_front, z_left_front = box_coords_xyz_left_front
+            #     yaw_left_front = yaw - yaw_correction
+               
+            #     new_data = np.array([x_left_front, y_left_front, z_left_front, w, l, h, yaw_left_front, vx, vy])
+            #     torch_tensor = torch.from_numpy(new_data)
+            #     gt_bboxes_3d[index] = torch_tensor
+       
+            # for index in range(len(lidar2img)):
+            #     lidar2img_ = lidar2img[index]
+            #     trans = np.eye(4)
+            #     trans[:3, :3] = rotation_matrix
+            #     lidar2img_ = lidar2img_  @ trans.T
+            #     lidar2img[index] = lidar2img_
+
+
+            
+            # if not isinstance(gt_bboxes_3d, LiDARInstance3DBoxes):
+            #     gt_bboxes_3d = LiDARInstance3DBoxes(
+            #         gt_bboxes_3d,
+            #         box_dim=gt_bboxes_3d.shape[-1],
+            #         origin=(0.5, 0.5, 0),
+            #     ).convert_to(self.box_mode_3d)
+
+            # if isinstance(gt_bboxes_3d, BaseInstance3DBoxes):
+            #     gt_bboxes_3d = DC(
+            #         gt_bboxes_3d, cpu_only=True)
+            # result["gt_bboxes_3d"] = gt_bboxes_3d
+            # result["projection_mat"] = lidar2img
+            # results[i] = result
+            # continue
+
+            # visualize part
+            if "track_ids" in result:
+                color = []
+                for id in result["track_ids"].cpu().numpy().tolist():
+                    color.append(
+                        self.ID_COLOR_MAP[int(id % len(self.ID_COLOR_MAP))]
+                    )
+            elif "gt_labels_3d" in result:
+                color = []
+                for id in result["gt_labels_3d"].data.cpu().numpy().tolist():
+                    color.append(self.ID_COLOR_MAP[id])
+            else:
+                color = (255, 0, 0)
+
+            for j, img_origin in enumerate(raw_imgs):
+                img = img_origin.copy()
+                if len(gt_bboxes_3d) != 0:
+                    img = draw_lidar_bbox3d_on_img(
+                        gt_bboxes_3d,
+                        img,
+                        lidar2img[j],
+                        img_metas=None,
+                        color=color,
+                        thickness=3,
+                    )
+                    # if sampled_points is not None:
+                    #     img = draw_points_on_img(
+                    #         sampled_points,
+                    #         img,
+                    #         lidar2img[j],
+                    #         color=color,
+                    #         circle=4,
+                    #     )
+
+                imgs.append(img)
+
+            bev_range = 124  # meters
+            marking_color = (127, 127, 127)
+            bev_h, bev_w = img.shape[0] * 2, img.shape[0] * 2
+            # bev_h, bev_w = img.shape[1], img.shape[1]
+            bev = np.zeros([bev_h, bev_w, 3])
+            bev_resolution = 124 / bev_h
+            for cir in range(int(bev_range / 2 / 10)):
+                cv2.circle(
+                    bev,
+                    (int(bev_h / 2), int(bev_w / 2)),
+                    int((cir + 1) * 10 / bev_resolution),
+                    marking_color,
+                    thickness=3,
+                )
+            cv2.line(
+                bev,
+                (0, int(bev_h / 2)),
+                (bev_w, int(bev_h / 2)),
+                marking_color,
+            )
+            cv2.line(
+                bev,
+                (int(bev_w / 2), 0),
+                (int(bev_w / 2), bev_h),
+                marking_color,
+            )
+            if len(gt_bboxes_3d) != 0:
+                bev_corners = gt_bboxes_3d.corners[:, [0, 3, 4, 7]][
+                    ..., [0, 1]
+                ]
+                xs = bev_corners[..., 0] / bev_resolution + bev_w / 2
+                ys = -bev_corners[..., 1] / bev_resolution + bev_h / 2
+                for obj_idx, (x, y) in enumerate(zip(xs, ys)):
+                    for p1, p2 in ((0, 1), (0, 2), (1, 3), (2, 3)):
+                        if "track_ids" in result or "gt_labels_3d" in result:
+                            tmp = color[obj_idx]
+                        else:
+                            tmp = color
+                        cv2.line(
+                            bev,
+                            (int(x[p1]), int(y[p1])),
+                            (int(x[p2]), int(y[p2])),
+                            tmp,
+                            thickness=3,
+                        )
+            bev = np.uint8(bev)
+            padding = np.zeros_like(bev)
+
+            for j, name in enumerate(
+                [
+                    "front",
+                    "front right",
+                    "front left",
+                    "rear",
+                    "rear left",
+                    "rear right",
+                ]
+            ):
+                imgs[j] = cv2.rectangle(
+                    imgs[j],
+                    (0, 0),
+                    (440, 80),
+                    color=(255, 255, 255),
+                    thickness=-1,
+                )
+                w, h = cv2.getTextSize(name, cv2.FONT_HERSHEY_SIMPLEX, 2, 2)[0]
+                text_x = int(220 - w / 2)
+                text_y = int(40 + h / 2)
+
+                imgs[j] = cv2.putText(
+                    imgs[j],
+                    name,
+                    (text_x, text_y),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    2,
+                    (0, 0, 0),
+                    2,
+                    cv2.LINE_AA,
+                )
+            image = np.concatenate(
+                [
+                    np.concatenate([imgs[2], imgs[0], imgs[1]], axis=1),
+                    np.concatenate([imgs[5], imgs[3], imgs[4]], axis=1),
+                ],
+                axis=0,
+            )
+            image = np.concatenate([image, bev], axis=1)
+            # if videoWriter is None:
+            #     videoWriter = cv2.VideoWriter(
+            #         os.path.join(save_dir, "video.avi"),
+            #         fourcc,
+            #         7,
+            #         image.shape[:2][::-1],
+            #     )
+            cv2.imwrite(os.path.join(save_dir, f"{index}.jpg"), image)
+            # videoWriter.write(image)
+        import ipdb; ipdb.set_trace()
+        # videoWriter.release()
+
 
     def __getitem__(self, idx):
         if isinstance(idx, dict):
@@ -501,6 +710,7 @@ class NuScenes3DDetTrackDataset(Custom3DDataset):
             ego2global_translation=info["ego2global_translation"],
             ego2global_rotation=info["ego2global_rotation"],
         )
+        # import ipdb; ipdb.set_trace()
         lidar2ego = np.eye(4)
         lidar2ego[:3, :3] = pyquaternion.Quaternion(
             info["lidar2ego_rotation"]
@@ -517,9 +727,12 @@ class NuScenes3DDetTrackDataset(Custom3DDataset):
             image_paths = []
             lidar2img_rts = []
             cam_intrinsic = []
+            sensor2lidar_rotation = []
             for cam_type, cam_info in info["cams"].items():
+                # import ipdb; ipdb.set_trace()
                 image_paths.append(cam_info["data_path"])
                 # obtain lidar to image transformation matrix
+                sensor2lidar_rotation.append(cam_info["sensor2lidar_rotation"])
                 lidar2cam_r = np.linalg.inv(cam_info["sensor2lidar_rotation"])
                 lidar2cam_t = (
                     cam_info["sensor2lidar_translation"] @ lidar2cam_r.T
@@ -539,6 +752,7 @@ class NuScenes3DDetTrackDataset(Custom3DDataset):
                     img_filename=image_paths,
                     lidar2img=lidar2img_rts,
                     cam_intrinsic=cam_intrinsic,
+                    sensor2lidar_rotation=sensor2lidar_rotation,
                 )
             )
 
@@ -1145,6 +1359,112 @@ def plot_rect3d_on_img(
                 )
 
     return img.astype(np.uint8)
+
+
+
+def test2():
+    cam_0_extrinsic = np.array([
+        [R00, R01, R02, T0],
+        [R10, R11, R12, T1],
+        [R20, R21, R22, T2],
+        [0, 0, 0, 1]
+    ])
+
+
+    cam_1_extrinsic = np.array([
+        [R00, R01, R02, T0],
+        [R10, R11, R12, T1],
+        [R20, R21, R22, T2],
+        [0, 0, 0, 1]
+    ])
+
+    rotation_matrix = cam_1_extrinsic[:3, :3] @ np.linalg.inv(cam_0_extrinsic[:3, :3])
+
+    delta_yaw = np.arctan2(rotation_matrix[1, 0], rotation_matrix[0, 0])
+    yaw_correction = -delta_yaw  
+
+    return rotation_matrix, yaw_correction
+
+
+def test():
+
+    for i in range(N):
+        box = boxes[i]
+        x, y, z, l, w, h, yaw = box
+
+        rotation_matrix, yaw_correction = test2()
+
+        box_coords_xyz = np.array([x, y, z])
+
+        box_coords_xyz_left_front = np.dot(rotation_matrix, box_coords_xyz)
+
+        x_left_front, y_left_front, z_left_front = box_coords_xyz_left_front
+
+        yaw_left_front = yaw + yaw_correction
+
+
+def test3():
+    # 假设 rotation_matrix 是从前视相机坐标系到左前视相机坐标系的旋转矩阵
+
+    # 创建一个空的列表，用于存储转换后的 lidar2img 矩阵
+    transformed_lidar2img_rts = []
+
+    for cam_type, cam_info in info["cams"].items():
+        image_paths.append(cam_info["data_path"])
+
+        # 获取相机参数
+        intrinsic = cam_info["cam_intrinsic"]
+        sensor2lidar_rotation = cam_info["sensor2lidar_rotation"]
+        sensor2lidar_translation = cam_info["sensor2lidar_translation"]
+
+        # 计算 lidar2cam 矩阵（与前视相机坐标系相关）
+        lidar2cam_r = np.linalg.inv(sensor2lidar_rotation)
+        lidar2cam_t = sensor2lidar_translation @ lidar2cam_r.T
+
+        # 创建 lidar2cam_rt 矩阵
+        lidar2cam_rt = np.eye(4)
+        lidar2cam_rt[:3, :3] = lidar2cam_r.T
+        lidar2cam_rt[3, :3] = -lidar2cam_t
+
+        # 创建 lidar2img_rt 矩阵（与前视相机坐标系相关）
+        viewpad = np.eye(4)
+        viewpad[:intrinsic.shape[0], :intrinsic.shape[1]] = intrinsic
+        lidar2img_rt = viewpad @ lidar2cam_rt.T
+
+        # 考虑坐标系的转换
+        # 将 lidar2img_rt 与 rotation_matrix 相乘以考虑坐标系转换
+        transformed_lidar2img_rt = lidar2img_rt @ rotation_matrix.T
+
+        # 将转换后的 lidar2img_rt 添加到列表中
+        transformed_lidar2img_rts.append(transformed_lidar2img_rt)
+
+    # transformed_lidar2img_rts 现在包含了各个相机的转换后的 lidar2img 矩阵
+
+
+
+
+def lidarF2lidarL():
+
+    for i in range(N):
+        box = boxes[i]
+        x, y, z, l, w, h, yaw = box
+
+        box_coords = np.array([x, y, z, 1])
+
+     
+        box_coords_cam = lidar2cam_rt @ box_coords
+
+  
+        flip_x_matrix = np.array([
+            [-1, 0, 0, 0],
+            [0, 1, 0, 0],
+            [0, 0, 1, 0],
+            [0, 0, 0, 1]
+        ])
+
+        box_coords_left_front_lidar = flip_x_matrix @ box_coords_cam
+
+
 
 
 def draw_lidar_bbox3d_on_img(
