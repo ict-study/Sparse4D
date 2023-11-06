@@ -171,6 +171,7 @@ train_pipeline = [
     dict(type='ObjectNameFilter', classes=class_names),
     dict(type='DefaultFormatBundle3D', class_names=class_names),
     dict(type='NuScenesSparse4DAdaptor'),
+    dict(type='VirtualLidar'),
     dict(
         type='Collect3D',
         keys=[
@@ -180,6 +181,7 @@ train_pipeline = [
             "timestamp",
             "projection_mat",
             "image_wh",
+            "sensor2lidar_rotation",
         ],
         meta_keys=["timestamp", "T_global", "T_global_inv"],
     )

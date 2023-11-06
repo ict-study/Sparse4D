@@ -9,6 +9,7 @@ from .transform_3d import (
     PhotoMetricDistortionMultiViewImage,
     CustomCropMultiViewImage,
     NuScenesSparse4DAdaptor,
+    VirtualLidar,
 )
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
    "PhotoMetricDistortionMultiViewImage",
    "CustomCropMultiViewImage",
    "NuScenesSparse4DAdaptor",
+   "VirtualLidar"
 ]

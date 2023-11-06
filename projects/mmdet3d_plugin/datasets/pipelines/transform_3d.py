@@ -1,5 +1,6 @@
 import time
 import torch
+import random
 
 import numpy as np
 from numpy import random
@@ -7,6 +8,10 @@ import mmcv
 from mmdet.datasets.builder import PIPELINES
 from PIL import Image
 
+from mmdet3d.core.bbox import LiDARInstance3DBoxes
+from mmdet3d.core.bbox import BaseInstance3DBoxes
+from mmcv.parallel import DataContainer as DC
+from mmdet3d.core.bbox import get_box_type
 
 @PIPELINES.register_module()
 class ImagePositionEmbeding(object):
@@ -101,6 +106,10 @@ class NuScenesSparse4DAdaptor(object):
         pass
 
     def __call__(self, input_dict):
+        # import ipdb; ipdb.set_trace()
+        input_dict["sensor2lidar_rotation"] = np.float32(
+            np.stack(input_dict["sensor2lidar_rotation"])
+        )
         input_dict["projection_mat"] = np.float32(
             np.stack(input_dict["lidar2img"])
         )
@@ -114,6 +123,68 @@ class NuScenesSparse4DAdaptor(object):
                 np.stack(input_dict["cam_intrinsic"])
             )
             input_dict["focal"] = input_dict["cam_intrinsic"][..., 0, 0]
+        return input_dict
+
+
+@PIPELINES.register_module()
+class VirtualLidar(object):
+    def __init__(self, box_type_3d='LiDAR'):
+        self.box_type_3d, self.box_mode_3d = get_box_type(box_type_3d)
+
+    def __call__(self, input_dict):
+        # import ipdb; ipdb.set_trace()
+        random_view = random.randint(0, 1)
+        if random_view > 0:
+            if "gt_bboxes_3d" in input_dict.keys():
+                gt_bboxes_3d = input_dict["gt_bboxes_3d"]
+            imgs = []
+            raw_imgs = [
+                x.permute(1, 2, 0).cpu().numpy() for x in input_dict["img"].data
+            ]
+            lidar2img = input_dict["projection_mat"]
+            gt_bboxes_3d = gt_bboxes_3d.data.tensor
+            
+            sensor2lidar_rotation = input_dict["sensor2lidar_rotation"]
+            cam_0_extrinsic = sensor2lidar_rotation[0]
+            cam_1_extrinsic = sensor2lidar_rotation[random_view]
+            rotation_matrix = cam_1_extrinsic @ np.linalg.inv(cam_0_extrinsic)
+            delta_yaw = np.arctan2(rotation_matrix[1, 0], rotation_matrix[0, 0])
+            yaw_correction = -delta_yaw
+
+            for index in range(len(gt_bboxes_3d)):
+                x, y, z, w, l, h, yaw, vx, vy = gt_bboxes_3d[index]
+                box_coords_xyz = np.array([x, y, z])
+                box_coords_xyz_left_front = np.dot(rotation_matrix, box_coords_xyz)
+                x_left_front, y_left_front, z_left_front = box_coords_xyz_left_front
+                yaw_left_front = yaw - yaw_correction
+                # yaw_left_front = yaw
+                new_data = np.array([x_left_front, y_left_front, z_left_front, w, l, h, yaw_left_front, vx, vy])
+                torch_tensor = torch.from_numpy(new_data)
+                gt_bboxes_3d[index] = torch_tensor
+            # import ipdb; ipdb.set_trace()
+            for index in range(len(lidar2img)):
+                lidar2img_ = lidar2img[index]
+                trans = np.eye(4)
+                # rotation_matrix = torch.from_numpy(rotation_matrix)
+                trans[:3, :3] = rotation_matrix
+                lidar2img_ = lidar2img_  @ trans.T
+                # lidar2img_ = trans @ lidar2img_ 
+                lidar2img[index] = lidar2img_
+
+            if not isinstance(gt_bboxes_3d, LiDARInstance3DBoxes):
+                gt_bboxes_3d = LiDARInstance3DBoxes(
+                    gt_bboxes_3d,
+                    box_dim=gt_bboxes_3d.shape[-1],
+                    origin=(0.5, 0.5, 0),
+                ).convert_to(self.box_mode_3d)
+
+            if isinstance(gt_bboxes_3d, BaseInstance3DBoxes):
+                gt_bboxes_3d = DC(
+                    gt_bboxes_3d, cpu_only=True
+                )
+            input_dict["gt_bboxes_3d"] = gt_bboxes_3d
+            input_dict["projection_mat"] = lidar2img
+        
         return input_dict
 
 
